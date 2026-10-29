@@ -79,15 +79,13 @@ async def scheduled_broadcast_worker():
             for msg in pending:
                 try:
                     users = await db.get_filtered_users(msg['filter_type'])
-                    tasks = []
-                    for user in users:
-                        if user.get('is_banned') and msg['filter_type'] != 'banned':
-                            continue
-                        tasks.append(_safe_send(user['user_id'], msg['message_text']))
-
-                    results = await asyncio.gather(*tasks)
-                    sent = sum(1 for r in results if r)
-                    failed = len(results) - sent
+                    eligible_users = [
+                        user for user in users
+                        if not user.get('is_banned') or msg['filter_type'] == 'banned'
+                    ]
+                    sent, failed = await _send_broadcast_in_batches(
+                        eligible_users, msg['message_text']
+                    )
                     await db.mark_scheduled_sent(msg['id'], sent, failed)
                     logger.info(f"Scheduled broadcast #{msg['id']} sent: {sent} ok, {failed} failed")
                 except Exception as e:
@@ -104,6 +102,23 @@ async def _safe_send(user_id: int, text: str) -> bool:
         return True
     except:
         return False
+
+
+async def _send_broadcast_in_batches(users: list[dict], text: str) -> tuple[int, int]:
+    """Отправляет рассылку ограниченными пачками, не создавая задачу на каждого юзера."""
+    batch_size = max(1, config.MAX_CONCURRENT_BROADCASTS)
+    sent = 0
+    failed = 0
+
+    for start in range(0, len(users), batch_size):
+        batch = users[start:start + batch_size]
+        results = await asyncio.gather(
+            *(_safe_send(user['user_id'], text) for user in batch)
+        )
+        sent += sum(results)
+        failed += len(results) - sum(results)
+
+    return sent, failed
 
 
 # ==================== STARTUP ====================
