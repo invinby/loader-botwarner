@@ -5,6 +5,7 @@ import os
 import asyncio
 import logging
 import re
+from urllib.parse import urlsplit
 from yt_dlp import YoutubeDL
 import config
 
@@ -26,8 +27,26 @@ class SocialDownloader:
     ]
 
     def is_supported_url(self, url: str) -> bool:
-        """Проверяет, поддерживается ли ссылка"""
-        return any(domain in url.lower() for domain in self.SUPPORTED_DOMAINS)
+        """Проверяет схему и точный hostname поддерживаемой ссылки."""
+        try:
+            parsed = urlsplit(url.strip())
+            hostname = parsed.hostname
+            if (
+                parsed.scheme.lower() not in {"http", "https"}
+                or not hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.port not in {None, 80, 443}
+            ):
+                return False
+        except ValueError:
+            return False
+
+        hostname = hostname.lower().rstrip(".")
+        return any(
+            hostname == domain or hostname.endswith(f".{domain}")
+            for domain in self.SUPPORTED_DOMAINS
+        )
 
     async def get_video_info(self, url: str) -> dict:
         """Получить информацию о видео"""
